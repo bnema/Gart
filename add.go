@@ -12,8 +12,26 @@ import (
 	"github.com/bnema/Gart/system"
 )
 
+var ignoredDirs = []string{
+	".svelte-kit", "local", ".cache", ".git", ".github", ".store", "ollama", "spotify",
+	".vscode", ".idea", "node_modules", "vendor", "target",
+	"build", "dist", "out", "bin", "obj", "logs", "tmp",
+	"backup", "backups", "cache", "caches", "temp", "temps",
+	"tmps", "tmpfs", "tempfs", ".var", ".store", "yay", "src", "pkg", "bin", "lib", "include", "share", "local", "opt",
+	"pacman", "snap", "flatpak", "paru", ".npm", ".pnpm", ".yarn", ".cargo", ".steam",
+}
+
+func isIgnoredDir(dirPath string) bool {
+	for _, dir := range ignoredDirs {
+		if strings.Contains(dirPath, dir) {
+			return true
+		}
+	}
+	return false
+}
+
 func (app *App) addDotfile(path, name string) {
-	// Si le chemin commence par ~, remplacez-le par le répertoire personnel de l'utilisateur
+	// If the path starts with a tilde, replace it with the user's home directory
 	if strings.HasPrefix(path, "~") {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -22,17 +40,16 @@ func (app *App) addDotfile(path, name string) {
 		}
 		path = home + path[1:]
 	}
-
 	if strings.HasSuffix(path, "*") {
 		directoryPath := strings.TrimSuffix(path, "*")
 
-		// Créez un canal tamponné pour contenir les chemins des répertoires
+		// Create a channel to send directory paths to
 		dirChan := make(chan string, 1000)
 
-		// Créez un groupe d'attente pour attendre que toutes les goroutines des travailleurs se terminent
+		// Create a WaitGroup to wait for all the worker goroutines to finish
 		var wg sync.WaitGroup
 
-		// Déterminez le nombre de goroutines de travailleurs en fonction des cœurs CPU disponibles
+		// Get the number of CPU cores
 		numWorkers := runtime.NumCPU()
 
 		// Démarrez les goroutines des travailleurs
@@ -41,13 +58,16 @@ func (app *App) addDotfile(path, name string) {
 			go func() {
 				defer wg.Done()
 				for dirPath := range dirChan {
-					dirName := filepath.Base(dirPath)
-					if (dirName == ".config" && strings.Contains(dirPath, "gart")) || dirName == ".local" {
+					// Check if the directory is ignored or is the same as the destination directory
+					if isIgnoredDir(dirPath) || strings.HasPrefix(dirPath, app.StorePath) {
 						fmt.Printf("Répertoire ignoré : %s\n", dirPath)
 						continue
 					}
-					destPath := filepath.Join(app.StorePath, name, dirName)
-					system.CopyDirectory(dirPath, destPath)
+					destPath := filepath.Join(app.StorePath, name, strings.TrimPrefix(dirPath, filepath.Dir(directoryPath)))
+					err := system.CopyDirectory(dirPath, destPath)
+					if err != nil {
+						fmt.Printf("Erreur lors de la copie du répertoire : %v\n", err)
+					}
 				}
 			}()
 		}
@@ -57,7 +77,7 @@ func (app *App) addDotfile(path, name string) {
 			if err != nil {
 				return err
 			}
-			if info.IsDir() {
+			if info.IsDir() && strings.HasPrefix(info.Name(), ".") {
 				dirChan <- filePath
 			}
 			return nil
